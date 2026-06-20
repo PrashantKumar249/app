@@ -21,13 +21,31 @@ export async function getFirstUnattemptedQuestion(
 }
 
 export async function getActiveOrPausedSession(topicId: string): Promise<Session | undefined> {
-  return db.sessions
+  const sessions = await db.sessions
     .where('[topicId+status]')
     .anyOf([
       [topicId, 'active'],
       [topicId, 'paused'],
     ])
-    .first()
+    .toArray()
+
+  if (sessions.length === 0) return undefined
+
+  return sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0]
+}
+
+export async function getSessionQuestionRange(
+  sessionId: string,
+): Promise<{ from: number; to: number; attempted: number } | null> {
+  const answers = await getSessionAnswers(sessionId)
+  if (answers.length === 0) return null
+
+  const numbers = [...new Set(answers.map((a) => a.questionNumber))]
+  return {
+    from: Math.min(...numbers),
+    to: Math.max(...numbers),
+    attempted: numbers.length,
+  }
 }
 
 export async function startSession(topicId: string): Promise<Session> {

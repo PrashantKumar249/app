@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AnswerKeyEditor } from '../components/topics/AnswerKeyEditor'
+import { TopicPracticeCard } from '../components/topics/TopicPracticeCard'
 import { answerKeyToText } from '../utils/answerKeyText'
 import { TopicForm, formatPageRange } from '../components/topics/TopicForm'
 import { ProgressBar } from '../components/dashboard/ProgressBar'
@@ -10,11 +11,17 @@ import { getTopicStats } from '../services/analyticsService'
 import {
   getActiveOrPausedSession,
   getFirstUnattemptedQuestion,
+  getSessionQuestionRange,
   getSessionsForTopic,
   startSession,
 } from '../services/sessionService'
 import { resetTopicProgress } from '../services/resetService'
 import type { Session, Topic, TopicFormData, TopicStats } from '../types'
+
+interface PastSessionRow {
+  session: Session
+  rangeLabel: string | null
+}
 
 export function TopicDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -22,7 +29,8 @@ export function TopicDetailPage() {
   const [topic, setTopic] = useState<Topic | null>(null)
   const [stats, setStats] = useState<TopicStats | null>(null)
   const [activeSession, setActiveSession] = useState<Session | null>(null)
-  const [pastSessions, setPastSessions] = useState<Session[]>([])
+  const [pastSessions, setPastSessions] = useState<PastSessionRow[]>([])
+  const [completedSessionCount, setCompletedSessionCount] = useState(0)
   const [nextStartQuestion, setNextStartQuestion] = useState(1)
   const [editing, setEditing] = useState(false)
   const [showKeyEditor, setShowKeyEditor] = useState(false)
@@ -35,7 +43,18 @@ export function TopicDetailPage() {
     setTopic(t)
     setStats(await getTopicStats(t))
     setActiveSession((await getActiveOrPausedSession(id)) ?? null)
-    setPastSessions(await getSessionsForTopic(id))
+    const sessions = await getSessionsForTopic(id)
+    const completed = sessions.filter((s) => s.status === 'completed')
+    const rows: PastSessionRow[] = []
+    for (const session of completed.slice(0, 5)) {
+      const range = await getSessionQuestionRange(session.id)
+      rows.push({
+        session,
+        rangeLabel: range ? `Q${range.from}–Q${range.to} · ${range.attempted} attempted` : null,
+      })
+    }
+    setPastSessions(rows)
+    setCompletedSessionCount(completed.length)
     setNextStartQuestion(await getFirstUnattemptedQuestion(id, t.totalQuestions))
   }
 
@@ -188,48 +207,36 @@ export function TopicDetailPage() {
 
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="space-y-2">
-        {activeSession ? (
-          <button
-            type="button"
-            onClick={handleResume}
-            className="w-full rounded-lg bg-success py-3 font-semibold text-white"
-          >
-            {activeSession.status === 'paused' ? 'Resume Session' : 'Continue Session'}
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={handleStartSession}
-            disabled={!hasAnswerKey}
-            className="w-full rounded-lg bg-accent py-3 font-semibold text-white disabled:opacity-50"
-          >
-            Start Session from Q{nextStartQuestion}
-          </button>
-        )}
-      </div>
+      <TopicPracticeCard
+        activeSession={activeSession}
+        nextQuestion={nextStartQuestion}
+        questionsSolved={stats?.questionsSolved ?? 0}
+        totalQuestions={topic.totalQuestions}
+        completedSessionCount={completedSessionCount}
+        hasAnswerKey={hasAnswerKey}
+        onContinue={handleResume}
+        onNewSession={handleStartSession}
+      />
 
-      {pastSessions.filter((s) => s.status === 'completed').length > 0 && (
+      {pastSessions.length > 0 && (
         <div>
-          <h3 className="mb-2 text-sm font-medium text-muted">Past Sessions</h3>
+          <h3 className="mb-2 text-sm font-medium text-muted">Past sessions (results only)</h3>
           <div className="space-y-2">
-            {pastSessions
-              .filter((s) => s.status === 'completed')
-              .slice(0, 5)
-              .map((s) => (
-                <Link
-                  key={s.id}
-                  to={`/session/${s.id}/results`}
-                  className="block rounded-lg border border-app bg-surface px-4 py-3 text-sm"
-                >
-                  {new Date(s.startedAt).toLocaleString()}
-                  {s.endedAt && (
-                    <span className="ml-2 text-muted">
-                      · {Math.round(s.totalTimeSpent / 60000)}m
-                    </span>
-                  )}
-                </Link>
-              ))}
+            {pastSessions.map(({ session, rangeLabel }) => (
+              <Link
+                key={session.id}
+                to={`/session/${session.id}/results`}
+                className="block rounded-lg border border-app bg-surface px-4 py-3 text-sm"
+              >
+                <span>{new Date(session.startedAt).toLocaleString()}</span>
+                {rangeLabel && <span className="ml-2 text-muted">· {rangeLabel}</span>}
+                {session.endedAt && (
+                  <span className="ml-2 text-muted">
+                    · {Math.round(session.totalTimeSpent / 60000)}m
+                  </span>
+                )}
+              </Link>
+            ))}
           </div>
         </div>
       )}
